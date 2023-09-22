@@ -448,6 +448,23 @@ class EBSVolume(_TagMixin, _SharedMethodsMixin, Volume):
         """
         return self.delete()
 
+class Resource():
+    def __init__(self, arn, region, resource_type, service, properties=[]):
+        self.arn = arn
+        self.region = region
+        self.resource_type = resource_type
+        self.service = service
+        self.properties = properties
+
+    def get_tag(self, key):
+        if len(self.properties) > 0:
+            data = self.properties[0].get('Data')
+            for tag in data:
+                k = tag.get('Key')
+                v = tag.get('Value')
+                if k == key:
+                    return v
+        return None
 
 class EC2System(System, VmMixin, TemplateMixin, StackMixin, NetworkMixin):
     """EC2 Management System, powered by boto
@@ -507,6 +524,7 @@ class EC2System(System, VmMixin, TemplateMixin, StackMixin, NetworkMixin):
         self.ssm_connection = boto3client('ssm', **connection_kwargs)
         self.sns_connection = boto3client('sns', **connection_kwargs)
         self.cw_events_connection = boto3client('events', **connection_kwargs)
+        self.resource_explorer_connection = boto3client('resource-explorer-2', **connection_kwargs)
 
         self.kwargs = kwargs
 
@@ -1625,3 +1643,36 @@ class EC2System(System, VmMixin, TemplateMixin, StackMixin, NetworkMixin):
         self.remove_all_unused_nics()
         self.remove_all_unused_volumes()
         self.remove_all_unused_ips()
+
+    def list_resources(self, query="", view=""):
+        """
+        List resources using AWS Resource Explorer (resource-explorer-2).
+
+        Args:
+            query: keywords and filters for resources; default is "" (all)
+            view: arn of the view to use for the query; default is "" (default view)
+
+        Result:
+            a list of resources satisfying the query
+
+        Examples:
+            Use query 'tag.key:kubernetes.io/cluster/*' to list OCP resources
+        """
+        args = {
+            'QueryString':query
+        }
+        if view:
+            args['ViewArn'] = view
+        result = self.resource_explorer_connection.search(**args)
+        resources = result.get('Resources')
+        list = []
+        for r in resources:
+            resource = Resource(
+                arn=r.get('Arn'),
+                region=r.get('Region'),
+                service=r.get('Service'),
+                properties=r.get('Properties'),
+                resource_type=r.get('ResourceType')
+            )
+            list.append(resource)
+        return list
